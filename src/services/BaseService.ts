@@ -12,6 +12,8 @@ export const axiosService = axios.create();
 
 export const AMUI_URL = isSaasBuild ? (window as any).NMUI_AMUI_URL : '';
 
+export const INTERCOM_APP_ID = isSaasBuild ? (window as any).NMUI_INTERCOM_APP_ID : '';
+
 // function to resolve the particular SaaS tenant's backend URL, ...
 export async function setupTenantConfig(): Promise<void> {
   if (!isSaasBuild) {
@@ -31,6 +33,7 @@ export async function setupTenantConfig(): Promise<void> {
   const tenantId = url.searchParams.get('tenantId') ?? '';
   const tenantName = url.searchParams.get('tenantName') ?? '';
   const username = url.searchParams.get('username') ?? '';
+  const amuiUserId = url.searchParams.get('userId') ?? '';
 
   const resolvedBaseUrl = baseUrl
     ? baseUrl?.startsWith('https')
@@ -57,10 +60,11 @@ export async function setupTenantConfig(): Promise<void> {
   useStore.getState().setStore({
     baseUrl: resolvedBaseUrl,
     jwt: accessToken || useStore.getState().jwt,
-    tenantId,
-    tenantName,
+    tenantId: tenantId || useStore.getState().tenantId,
+    tenantName: tenantName || useStore.getState().tenantName,
     amuiAuthToken,
-    username,
+    username: username || useStore.getState().username,
+    amuiUserId: amuiUserId || useStore.getState().amuiUserId,
     // user,
   });
 }
@@ -114,7 +118,7 @@ axiosService.interceptors.response.use(
     }
     // Return the error so it can be handled by the calling code
     return Promise.reject(err);
-  }
+  },
 );
 
 // branding
@@ -123,5 +127,5 @@ window.document
   .querySelector('meta[name="description"]')
   ?.setAttribute(
     'content',
-    `The management UI for ${getBrandingConfig().productName}. ${getBrandingConfig().productName} makes networks :)`
+    `The management UI for ${getBrandingConfig().productName}. ${getBrandingConfig().productName} makes networks :)`,
   );

@@ -74,7 +74,7 @@ export default function AddRelayModal({ isOpen, onCreateRelay, onCancel, network
 
   const filteredNetworkNodes = useMemo(
     () => networkNodes.filter((node) => node.name?.toLowerCase().includes(relaySearch.toLowerCase())),
-    [networkNodes, relaySearch]
+    [networkNodes, relaySearch],
   );
 
   const relayTableCols = useMemo<TableColumnProps<ExtendedNode>[]>(() => {
@@ -149,7 +149,12 @@ export default function AddRelayModal({ isOpen, onCreateRelay, onCancel, network
       <Divider style={{ margin: '0px 0px 2rem 0px' }} />
       <Form name="add-relay-form" form={form} layout="vertical">
         <div className="CustomModalBody">
-          <Form.Item label="Select host" name={nodeIdFormName} rules={[{ required: true }]}>
+          <Form.Item
+            label="Select host"
+            name={nodeIdFormName}
+            rules={[{ required: true }]}
+            data-nmui-intercom="add-relay-form_nodeid"
+          >
             {!selectedRelay && (
               <Select
                 placeholder="Select host"
@@ -224,7 +229,7 @@ export default function AddRelayModal({ isOpen, onCreateRelay, onCancel, network
 
           {selectedRelay && (
             <>
-              <Form.Item label="Select hosts to relay" required>
+              <Form.Item label="Select hosts to relay" required data-nmui-intercom="add-relay-form_relayed">
                 <Select
                   placeholder="Select hosts to relay"
                   open={isSelectOpen}
@@ -248,13 +253,13 @@ export default function AddRelayModal({ isOpen, onCreateRelay, onCancel, network
                             rowKey="id"
                             dataSource={[
                               ...filteredNetworkNodes
-                                .filter((node) =>
-                                  node.name?.toLocaleLowerCase().includes(relayedSearch.toLocaleLowerCase())
+                                .filter(
+                                  (node) => node.name?.toLocaleLowerCase().includes(relayedSearch.toLocaleLowerCase()),
                                 )
                                 .filter((h) => h.id !== selectedRelay.id),
                             ].sort((a, b) =>
                               // sort non-relayed hosts to the top
-                              isNodeRelay(a) === isNodeRelay(b) ? 0 : isNodeRelay(a) ? 1 : -1
+                              isNodeRelay(a) === isNodeRelay(b) ? 0 : isNodeRelay(a) ? 1 : -1,
                             )}
                             onRow={(node) => {
                               return {
@@ -328,8 +333,13 @@ export default function AddRelayModal({ isOpen, onCreateRelay, onCancel, network
         <Divider style={{ margin: '0px 0px 2rem 0px' }} />
         <div className="CustomModalBody">
           <Row>
-            <Col xs={24} style={{ textAlign: 'left' }}>
-              <Button type="primary" onClick={createRelay} loading={isSubmitting}>
+            <Col xs={24} style={{ textAlign: 'right' }}>
+              <Button
+                type="primary"
+                onClick={createRelay}
+                loading={isSubmitting}
+                data-nmui-intercom="add-relay-form_submitbtn"
+              >
                 Create Relay
               </Button>
             </Col>
