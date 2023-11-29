@@ -16,11 +16,10 @@ import { NetworksService } from '@/services/NetworksService';
 import { NodesService } from '@/services/NodesService';
 import { useStore } from '@/store/store';
 import { getExtendedNode, isNodeRelay } from '@/utils/NodeUtils';
-import { getNetworkHostRoute } from '@/utils/RouteUtils';
+import { getNetworkHostRoute, resolveAppRoute } from '@/utils/RouteUtils';
 import { extractErrorMsg } from '@/utils/ServiceUtils';
 import {
   CheckOutlined,
-  CloseOutlined,
   DashOutlined,
   DeleteOutlined,
   DownOutlined,
@@ -34,6 +33,7 @@ import {
   SearchOutlined,
   SettingOutlined,
   StopOutlined,
+  UserOutlined,
 } from '@ant-design/icons';
 import {
   Alert,
@@ -49,7 +49,6 @@ import {
   MenuProps,
   Modal,
   notification,
-  Progress,
   Radio,
   Row,
   Select,
@@ -75,7 +74,7 @@ import { ControlsContainer, FullScreenControl, SearchControl, SigmaContainer, Zo
 import NetworkGraph from '@/components/NetworkGraph';
 import UpdateRelayModal from '@/components/modals/update-relay-modal/UpdateRelayModal';
 import { MetricCategories, NetworkMetrics, NodeOrClientMetric, UptimeNodeMetrics } from '@/models/Metrics';
-import { getExtClientAclStatus, getHostHealth, getTimeMinHrs, renderMetricValue } from '@/utils/Utils';
+import { getExtClientAclStatus, getHostHealth, renderMetricValue, useBranding } from '@/utils/Utils';
 import AddHostsToNetworkModal from '@/components/modals/add-hosts-to-network-modal/AddHostsToNetworkModal';
 import NewHostModal from '@/components/modals/new-host-modal/NewHostModal';
 import AddIngressModal from '@/components/modals/add-ingress-modal/AddIngressModal';
@@ -83,9 +82,9 @@ import UpdateIngressModal from '@/components/modals/update-ingress-modal/UpdateI
 import UpdateClientModal from '@/components/modals/update-client-modal/UpdateClientModal';
 import { NULL_HOST, NULL_NODE } from '@/constants/Types';
 import UpdateNodeModal from '@/components/modals/update-node-modal/UpdateNodeModal';
-import { getBrandingConfig } from '@/services/BaseService';
 import VirtualisedTable from '@/components/VirtualisedTable';
 import { NETWORK_GRAPH_SIGMA_CONTAINER_ID } from '@/constants/AppConstants';
+import UpdateIngressUsersModal from '@/components/modals/update-ingress-users-modal/UpdateIngressUsersModal';
 
 interface ExternalRoutesTableData {
   node: ExtendedNode;
@@ -126,6 +125,7 @@ export default function NetworkDetailsPage(props: PageProps) {
   const navigate = useNavigate();
   const [notify, notifyCtx] = notification.useNotification();
   const { token: themeToken } = theme.useToken();
+  const branding = useBranding();
 
   const storeFetchNodes = store.fetchNodes;
   const storeDeleteNode = store.deleteNode;
@@ -173,9 +173,11 @@ export default function NetworkDetailsPage(props: PageProps) {
   const [isUpdateGatewayModalOpen, setIsUpdateGatewayModalOpen] = useState(false);
   const [isUpdateClientModalOpen, setIsUpdateClientModalOpen] = useState(false);
   const [isUpdateNodeModalOpen, setIsUpdateNodeModalOpen] = useState(false);
+  const [isUpdateIngressUsersModalOpen, setIsUpdateIngressUsersModalOpen] = useState(false);
   const [targetNode, setTargetNode] = useState<Node | null>(null);
   const [showClientAcls, setShowClientAcls] = useState(false);
   const [isSubmittingAcls, setIsSubmittingAcls] = useState(false);
+  const [isInitialLoad, setIsInitialLoad] = useState(true);
 
   const networkNodes = useMemo(
     () =>
@@ -192,11 +194,16 @@ export default function NetworkDetailsPage(props: PageProps) {
       .map((node) => getExtendedNode(node, store.hostsCommonDetails));
   }, [networkNodes, store.hostsCommonDetails]);
 
-  const filteredClientGateways = useMemo<ExtendedNode[]>(
-    () =>
-      clientGateways.filter((node) => node.name?.toLowerCase().includes(searchClientGateways.toLowerCase()) ?? false),
-    [clientGateways, searchClientGateways],
-  );
+  const filteredClientGateways = useMemo<ExtendedNode[]>(() => {
+    const filteredGateways = clientGateways.filter(
+      (node) => node.name?.toLowerCase().includes(searchClientGateways.toLowerCase()) ?? false,
+    );
+    if (isInitialLoad) {
+      setSelectedGateway(filteredGateways[0] ?? null);
+      setIsInitialLoad(false);
+    }
+    return filteredGateways;
+  }, [clientGateways, searchClientGateways, isInitialLoad]);
 
   const filteredClients = useMemo<ExternalClient[]>(
     () =>
@@ -508,6 +515,7 @@ export default function NetworkDetailsPage(props: PageProps) {
             await NodesService.deleteIngressNode(gateway.id, gateway.network);
             storeFetchNodes();
             loadClients();
+            notify.success({ message: 'Gateway deleted' });
           } catch (err) {
             if (err instanceof AxiosError) {
               notify.error({
@@ -531,6 +539,7 @@ export default function NetworkDetailsPage(props: PageProps) {
           try {
             await NodesService.deleteEgressNode(egress.id, egress.network);
             storeFetchNodes();
+            notify.success({ message: 'Egress deleted' });
           } catch (err) {
             if (err instanceof AxiosError) {
               notify.error({
@@ -657,6 +666,60 @@ export default function NetworkDetailsPage(props: PageProps) {
     [networkId, notify, storeFetchNodes],
   );
 
+  const getGatewayDropdownOptions = useCallback(
+    (gateway: Node) => {
+      const defaultOptions: MenuProps['items'] = [
+        {
+          key: 'edit',
+          label: (
+            <Typography.Text>
+              <EditOutlined /> Edit
+            </Typography.Text>
+          ),
+          onClick: (info: any) => {
+            setSelectedGateway(gateway);
+            setIsUpdateGatewayModalOpen(true);
+            info.domEvent.stopPropagation();
+          },
+        },
+        {
+          key: 'delete',
+          label: (
+            <Typography.Text>
+              <DeleteOutlined /> Delete
+            </Typography.Text>
+          ),
+          onClick: (info: any) => {
+            confirmDeleteGateway(gateway);
+            info.domEvent.stopPropagation();
+          },
+        },
+      ];
+
+      if (isServerEE) {
+        const addRemoveUsersOption: MenuProps['items'] = [
+          {
+            key: 'addremove',
+            label: (
+              <Typography.Text>
+                <UserOutlined /> Add / Remove Users
+              </Typography.Text>
+            ),
+            onClick: (info) => {
+              setSelectedGateway(gateway);
+              setIsUpdateIngressUsersModalOpen(true);
+              info.domEvent.stopPropagation();
+            },
+          },
+        ];
+        return [...addRemoveUsersOption, ...defaultOptions];
+      }
+
+      return defaultOptions;
+    },
+    [confirmDeleteGateway, isServerEE],
+  );
+
   const gatewaysTableCols = useMemo<TableColumnProps<ExtendedNode>[]>(
     () => [
       {
@@ -691,35 +754,7 @@ export default function NetworkDetailsPage(props: PageProps) {
             <Dropdown
               placement="bottomRight"
               menu={{
-                items: [
-                  {
-                    key: 'edit',
-                    label: (
-                      <Typography.Text
-                        onClick={() => {
-                          setSelectedGateway(gateway);
-                          setIsUpdateGatewayModalOpen(true);
-                        }}
-                      >
-                        <EditOutlined /> Edit
-                      </Typography.Text>
-                    ),
-                    onClick: (info) => {
-                      info.domEvent.stopPropagation();
-                    },
-                  },
-                  {
-                    key: 'delete',
-                    label: (
-                      <Typography.Text onClick={() => confirmDeleteGateway(gateway)}>
-                        <DeleteOutlined /> Delete
-                      </Typography.Text>
-                    ),
-                    onClick: (info) => {
-                      info.domEvent.stopPropagation();
-                    },
-                  },
-                ] as MenuProps['items'],
+                items: getGatewayDropdownOptions(gateway),
               }}
             >
               <Button type="text" icon={<MoreOutlined />} />
@@ -728,7 +763,7 @@ export default function NetworkDetailsPage(props: PageProps) {
         },
       },
     ],
-    [confirmDeleteGateway],
+    [getGatewayDropdownOptions],
   );
 
   const egressTableCols = useMemo<TableColumnProps<ExtendedNode>[]>(
@@ -766,27 +801,25 @@ export default function NetworkDetailsPage(props: PageProps) {
                   {
                     key: 'update',
                     label: (
-                      <Typography.Text
-                        onClick={() => {
-                          setFilteredEgress(egress);
-                          setIsUpdateEgressModalOpen(true);
-                        }}
-                      >
+                      <Typography.Text>
                         <EditOutlined /> Update
                       </Typography.Text>
                     ),
                     onClick: (info) => {
+                      setFilteredEgress(egress);
+                      setIsUpdateEgressModalOpen(true);
                       info.domEvent.stopPropagation();
                     },
                   },
                   {
                     key: 'delete',
                     label: (
-                      <Typography.Text onClick={() => confirmDeleteEgress(egress)}>
+                      <Typography.Text>
                         <DeleteOutlined /> Delete
                       </Typography.Text>
                     ),
                     onClick: (info) => {
+                      confirmDeleteEgress(egress);
                       info.domEvent.stopPropagation();
                     },
                   },
@@ -825,10 +858,13 @@ export default function NetworkDetailsPage(props: PageProps) {
                   {
                     key: 'delete',
                     label: (
-                      <Typography.Text onClick={() => confirmDeleteRange(range)}>
+                      <Typography.Text>
                         <DeleteOutlined /> Delete
                       </Typography.Text>
                     ),
+                    onClick: (info: any) => {
+                      confirmDeleteRange(range);
+                    },
                   },
                 ] as MenuProps['items'],
               }}
@@ -849,6 +885,14 @@ export default function NetworkDetailsPage(props: PageProps) {
         width: 500,
         render(value, client) {
           return <Typography.Link onClick={() => openClientDetails(client)}>{value}</Typography.Link>;
+        },
+      },
+      {
+        title: 'Owner ID',
+        dataIndex: 'ownerid',
+        width: 500,
+        render(value) {
+          return <Typography.Text>{value || 'n/a'}</Typography.Text>;
         },
       },
       {
@@ -902,23 +946,25 @@ export default function NetworkDetailsPage(props: PageProps) {
                   {
                     key: 'edit',
                     label: (
-                      <Typography.Text
-                        onClick={() => {
-                          setTargetClient(client);
-                          setIsUpdateClientModalOpen(true);
-                        }}
-                      >
+                      <Typography.Text>
                         <EditOutlined /> Edit
                       </Typography.Text>
                     ),
+                    onClick: (info: any) => {
+                      setTargetClient(client);
+                      setIsUpdateClientModalOpen(true);
+                    },
                   },
                   {
                     key: 'delete',
                     label: (
-                      <Typography.Text onClick={() => confirmDeleteClient(client)}>
+                      <Typography.Text>
                         <DeleteOutlined /> Delete
                       </Typography.Text>
                     ),
+                    onClick: (info: any) => {
+                      confirmDeleteClient(client);
+                    },
                   },
                 ] as MenuProps['items'],
               }}
@@ -959,27 +1005,25 @@ export default function NetworkDetailsPage(props: PageProps) {
                   {
                     key: 'update',
                     label: (
-                      <Typography.Text
-                        onClick={() => {
-                          setSelectedRelay(relay);
-                          setIsUpdateRelayModalOpen(true);
-                        }}
-                      >
+                      <Typography.Text>
                         <EditOutlined /> Update
                       </Typography.Text>
                     ),
                     onClick: (info) => {
+                      setSelectedRelay(relay);
+                      setIsUpdateRelayModalOpen(true);
                       info.domEvent.stopPropagation();
                     },
                   },
                   {
                     key: 'delete',
                     label: (
-                      <Typography.Text onClick={() => confirmDeleteRelay(relay)}>
+                      <Typography.Text>
                         <DeleteOutlined /> Delete
                       </Typography.Text>
                     ),
                     onClick: (info) => {
+                      confirmDeleteRelay(relay);
                       info.domEvent.stopPropagation();
                     },
                   },
@@ -1026,18 +1070,15 @@ export default function NetworkDetailsPage(props: PageProps) {
                   {
                     key: 'delete',
                     label: (
-                      <Typography.Text
-                        onClick={() =>
-                          confirmRemoveRelayed(
-                            relayed,
-                            networkNodes.find((node) => node.id === relayed.relayedby) ?? NULL_NODE,
-                          )
-                        }
-                      >
+                      <Typography.Text>
                         <DeleteOutlined /> Stop being relayed
                       </Typography.Text>
                     ),
                     onClick: (info) => {
+                      confirmRemoveRelayed(
+                        relayed,
+                        networkNodes.find((node) => node.id === relayed.relayedby) ?? NULL_NODE,
+                      );
                       info.domEvent.stopPropagation();
                     },
                   },
@@ -1267,10 +1308,17 @@ export default function NetworkDetailsPage(props: PageProps) {
         return [
           {
             title: '',
-            width: '10rem',
+            width: '5rem',
+            fixed: 'left',
             render(_, entry) {
               return (
-                <Typography.Text onClick={() => setFilteredMetricNodeId(entry.nodeId)}>
+                <Typography.Text
+                  style={{
+                    width: '5rem',
+                    wordBreak: 'keep-all',
+                  }}
+                  onClick={() => setFilteredMetricNodeId(entry.nodeId)}
+                >
                   {entry.nodeName}
                 </Typography.Text>
               );
@@ -1291,10 +1339,17 @@ export default function NetworkDetailsPage(props: PageProps) {
         return [
           {
             title: '',
-            width: '10rem',
+            width: '5rem',
+            fixed: 'left',
             render(_, entry) {
               return (
-                <Typography.Text onClick={() => setFilteredMetricNodeId(entry.nodeId)}>
+                <Typography.Text
+                  style={{
+                    width: '5rem',
+                    wordBreak: 'keep-all',
+                  }}
+                  onClick={() => setFilteredMetricNodeId(entry.nodeId)}
+                >
                   {entry.nodeName}
                 </Typography.Text>
               );
@@ -1315,10 +1370,17 @@ export default function NetworkDetailsPage(props: PageProps) {
         return [
           {
             title: '',
-            width: '10rem',
+            width: '5rem',
+            fixed: 'left',
             render(_, entry) {
               return (
-                <Typography.Text onClick={() => setFilteredMetricNodeId(entry.nodeId)}>
+                <Typography.Text
+                  style={{
+                    width: '5rem',
+                    wordBreak: 'keep-all',
+                  }}
+                  onClick={() => setFilteredMetricNodeId(entry.nodeId)}
+                >
                   {entry.nodeName}
                 </Typography.Text>
               );
@@ -1339,10 +1401,17 @@ export default function NetworkDetailsPage(props: PageProps) {
         return [
           {
             title: '',
-            width: '10rem',
+            width: '5rem',
+            fixed: 'left',
             render(_, entry) {
               return (
-                <Typography.Text onClick={() => setFilteredMetricNodeId(entry.nodeId)}>
+                <Typography.Text
+                  style={{
+                    width: '5rem',
+                    wordBreak: 'keep-all',
+                  }}
+                  onClick={() => setFilteredMetricNodeId(entry.nodeId)}
+                >
                   {entry.nodeName}
                 </Typography.Text>
               );
@@ -1363,10 +1432,17 @@ export default function NetworkDetailsPage(props: PageProps) {
         return [
           {
             title: '',
-            width: '10rem',
+            width: '5rem',
+            fixed: 'left',
             render(_, entry) {
               return (
-                <Typography.Text onClick={() => setFilteredMetricNodeId(entry.nodeId)}>
+                <Typography.Text
+                  style={{
+                    width: '5rem',
+                    wordBreak: 'keep-all',
+                  }}
+                  onClick={() => setFilteredMetricNodeId(entry.nodeId)}
+                >
                   {entry.nodeName}
                 </Typography.Text>
               );
@@ -1400,6 +1476,8 @@ export default function NetworkDetailsPage(props: PageProps) {
       {
         title: 'Client Name',
         dataIndex: 'node_name',
+        width: '5rem',
+        fixed: 'left',
       },
       {
         title: 'Connected',
@@ -1708,12 +1786,17 @@ export default function NetworkDetailsPage(props: PageProps) {
             />
           </Col>
           <Col xs={12} md={6} style={{ textAlign: 'right' }}>
-            <Dropdown.Button
-              type="primary"
-              style={{ justifyContent: 'end' }}
-              icon={<DownOutlined />}
+            <Dropdown
+              // icon={<DownOutlined />}
               menu={{
                 items: [
+                  {
+                    key: 'new-host',
+                    label: 'Add New Host',
+                    onClick() {
+                      setIsAddNewHostModalOpen(true);
+                    },
+                  },
                   {
                     key: 'existing-host',
                     label: 'Add Existing Host',
@@ -1723,10 +1806,14 @@ export default function NetworkDetailsPage(props: PageProps) {
                   },
                 ],
               }}
-              onClick={() => setIsAddNewHostModalOpen(true)}
             >
-              <PlusOutlined /> Add New Host
-            </Dropdown.Button>
+              <Button type="primary">
+                <Space>
+                  Add Host
+                  <DownOutlined />
+                </Space>
+              </Button>
+            </Dropdown>
           </Col>
 
           <Col xs={24} style={{ paddingTop: '1rem' }}>
@@ -1814,8 +1901,6 @@ export default function NetworkDetailsPage(props: PageProps) {
                               key: 'remove',
                               label: 'Remove from network',
                               danger: true,
-                              disabled: node.pendingdelete !== false,
-                              title: node.pendingdelete !== false ? 'Host is being removed from network' : '',
                               onClick: () =>
                                 removeNodeFromNetwork(false, getExtendedNode(node, store.hostsCommonDetails)),
                             },
@@ -1871,7 +1956,7 @@ export default function NetworkDetailsPage(props: PageProps) {
                 {
                   title: 'DNS Entry',
                   render(_, dns) {
-                    return <Typography.Text copyable>{`${dns.name}.${dns.network}`}</Typography.Text>;
+                    return <Typography.Text copyable>{`${dns.name}`}</Typography.Text>;
                   },
                   sorter: (a, b) => a.name.localeCompare(b.name),
                   defaultSortOrder: 'ascend',
@@ -2049,15 +2134,9 @@ export default function NetworkDetailsPage(props: PageProps) {
                   </Typography.Title>
                 </Col>
                 <Col xs={12} style={{ textAlign: 'right' }}>
-                  {selectedGateway && (
-                    <Button
-                      type="primary"
-                      style={{ marginRight: '1rem' }}
-                      onClick={() => setIsAddClientModalOpen(true)}
-                    >
-                      <PlusOutlined /> Create Client
-                    </Button>
-                  )}
+                  <Button type="primary" style={{ marginRight: '1rem' }} onClick={() => setIsAddClientModalOpen(true)}>
+                    <PlusOutlined /> Create Client
+                  </Button>
                   Display All{' '}
                   <Switch
                     title="Display all clients. Click a gateway to filter clients specific to that gateway."
@@ -2249,8 +2328,8 @@ export default function NetworkDetailsPage(props: PageProps) {
               </Typography.Title>
               <Typography.Text style={{ color: 'white ' }}>
                 Enable devices in your network to communicate with othererwise unreachable devices with relays.{' '}
-                {getBrandingConfig().productName} uses Turn servers to automatically route traffic in these scenarios,
-                but sometimes, you’d rather specify which device should be routing the traffic
+                {branding.productName} uses Turn servers to automatically route traffic in these scenarios, but
+                sometimes, you’d rather specify which device should be routing the traffic
                 <a href="https://www.netmaker.io/features/relay" target="_blank" rel="noreferrer">
                   (Learn More)
                 </a>
@@ -2359,7 +2438,16 @@ export default function NetworkDetailsPage(props: PageProps) {
         )}
       </div>
     );
-  }, [filteredRelayedNodes, filteredRelays, relayTableCols, relayedTableCols, relays, searchRelay, selectedRelay]);
+  }, [
+    branding.productName,
+    filteredRelayedNodes,
+    filteredRelays,
+    relayTableCols,
+    relayedTableCols,
+    relays.length,
+    searchRelay,
+    selectedRelay,
+  ]);
 
   const getAclsContent = useCallback(() => {
     return (
@@ -2632,7 +2720,7 @@ export default function NetworkDetailsPage(props: PageProps) {
                   className="connectivity-status-metrics-table"
                   rowKey="nodeId"
                   size="small"
-                  pagination={false}
+                  pagination={{ pageSize: 100 }}
                 />
               )}
               {currentMetric === 'latency' && (
@@ -2642,7 +2730,7 @@ export default function NetworkDetailsPage(props: PageProps) {
                   className="latency-metrics-table"
                   rowKey="nodeId"
                   size="small"
-                  pagination={false}
+                  pagination={{ pageSize: 100 }}
                 />
               )}
               {currentMetric === 'bytes-sent' && (
@@ -2652,7 +2740,7 @@ export default function NetworkDetailsPage(props: PageProps) {
                   className="bytes-sent-metrics-table"
                   rowKey="nodeId"
                   size="small"
-                  pagination={false}
+                  pagination={{ pageSize: 100 }}
                 />
               )}
               {currentMetric === 'bytes-received' && (
@@ -2662,7 +2750,7 @@ export default function NetworkDetailsPage(props: PageProps) {
                   className="bytes-received-metrics-table"
                   rowKey="nodeId"
                   size="small"
-                  pagination={false}
+                  pagination={{ pageSize: 100 }}
                 />
               )}
               {currentMetric === 'uptime' && (
@@ -2672,7 +2760,7 @@ export default function NetworkDetailsPage(props: PageProps) {
                   className="latency-metrics-table"
                   rowKey="nodeId"
                   size="small"
-                  pagination={false}
+                  pagination={{ pageSize: 100 }}
                 />
               )}
               {currentMetric === 'clients' && (
@@ -2682,7 +2770,7 @@ export default function NetworkDetailsPage(props: PageProps) {
                   className="clients-metrics-table"
                   rowKey="node_name"
                   size="small"
-                  pagination={false}
+                  pagination={{ pageSize: 100 }}
                 />
               )}
             </div>
@@ -2814,13 +2902,13 @@ export default function NetworkDetailsPage(props: PageProps) {
     setIsLoading(true);
     // route to networks if id is not present
     if (!networkId) {
-      navigate(AppRoutes.NETWORKS_ROUTE);
+      navigate(resolveAppRoute(AppRoutes.NETWORKS_ROUTE));
     }
     // load from store
     const network = store.networks.find((network) => network.netid === networkId);
     if (!network) {
       notify.error({ message: `Network ${networkId} not found` });
-      navigate(AppRoutes.NETWORKS_ROUTE);
+      navigate(resolveAppRoute(AppRoutes.NETWORKS_ROUTE));
       return;
     }
     setNetwork(network);
@@ -2872,7 +2960,7 @@ export default function NetworkDetailsPage(props: PageProps) {
       await NetworksService.deleteNetwork(networkId);
       notify.success({ message: `Network ${networkId} deleted` });
       store.deleteNetwork(networkId);
-      navigate(AppRoutes.NETWORKS_ROUTE);
+      navigate(resolveAppRoute(AppRoutes.NETWORKS_ROUTE));
     } catch (err) {
       if (err instanceof AxiosError) {
         notify.error({
@@ -2914,7 +3002,7 @@ export default function NetworkDetailsPage(props: PageProps) {
   }, [form, network]);
 
   if (!networkId) {
-    navigate(AppRoutes.NETWORKS_ROUTE);
+    navigate(resolveAppRoute(AppRoutes.NETWORKS_ROUTE));
     return null;
   }
 
@@ -2928,7 +3016,7 @@ export default function NetworkDetailsPage(props: PageProps) {
         {/* top bar */}
         <Row className="tabbed-page-row-padding">
           <Col xs={24}>
-            <Link to={AppRoutes.NETWORKS_ROUTE}>View All Networks</Link>
+            <Link to={resolveAppRoute(AppRoutes.NETWORKS_ROUTE)}>View All Networks</Link>
             <Row>
               <Col xs={18}>
                 <Typography.Title level={2} style={{ marginTop: '.5rem', marginBottom: '2rem' }}>
@@ -2956,6 +3044,15 @@ export default function NetworkDetailsPage(props: PageProps) {
                     </Button>
                   </>
                 )} */}
+                <Button
+                  style={{ marginRight: '1em' }}
+                  onClick={() => {
+                    store.fetchHosts();
+                    store.fetchNodes();
+                  }}
+                >
+                  <ReloadOutlined /> Reload
+                </Button>
                 <Dropdown
                   menu={{
                     items: [
@@ -3072,6 +3169,7 @@ export default function NetworkDetailsPage(props: PageProps) {
         isOpen={isAddNewHostModalOpen}
         onFinish={() => setIsAddNewHostModalOpen(false)}
         onCancel={() => setIsAddNewHostModalOpen(false)}
+        networkId={networkId}
       />
       <AddIngressModal
         isOpen={isAddClientGatewayModalOpen}
@@ -3091,6 +3189,14 @@ export default function NetworkDetailsPage(props: PageProps) {
             setIsUpdateGatewayModalOpen(false);
           }}
           onCancel={() => setIsUpdateGatewayModalOpen(false)}
+        />
+      )}
+      {selectedGateway && (
+        <UpdateIngressUsersModal
+          isOpen={isUpdateIngressUsersModalOpen}
+          ingress={selectedGateway}
+          networkId={networkId}
+          onCancel={() => setIsUpdateIngressUsersModalOpen(false)}
         />
       )}
       {targetClient && (

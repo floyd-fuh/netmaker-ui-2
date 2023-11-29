@@ -4,7 +4,14 @@ import { EnrollmentKey } from '@/models/EnrollmentKey';
 import { EnrollmentKeysService } from '@/services/EnrollmentKeysService';
 import { isEnrollmentKeyValid } from '@/utils/EnrollmentKeysUtils';
 import { extractErrorMsg } from '@/utils/ServiceUtils';
-import { DeleteOutlined, MoreOutlined, PlusOutlined, SearchOutlined } from '@ant-design/icons';
+import {
+  DeleteOutlined,
+  EditOutlined,
+  MoreOutlined,
+  PlusOutlined,
+  ReloadOutlined,
+  SearchOutlined,
+} from '@ant-design/icons';
 import {
   Button,
   Card,
@@ -27,10 +34,12 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { PageProps } from '../../models/Page';
 
 import './EnrollmentKeysPage.scss';
-import { getBrandingConfig } from '@/services/BaseService';
+import { useBranding } from '@/utils/Utils';
+import UpdateEnrollmentKeyModal from '@/components/modals/update-enrollment -key-modal/updateEnrollmentKeyModal';
 
 export default function EnrollmentKeysPage(props: PageProps) {
   const [notify, notifyCtx] = notification.useNotification();
+  const branding = useBranding();
 
   const [keys, setKeys] = useState<EnrollmentKey[]>([]);
   const [isLoadingKeys, setIsLoadingKeys] = useState(true);
@@ -38,6 +47,7 @@ export default function EnrollmentKeysPage(props: PageProps) {
   const [searchText, setSearchText] = useState('');
   const [selectedKey, setSelectedKey] = useState<EnrollmentKey | null>(null);
   const [isKeyDetailsModalOpen, setIsKeyDetailsModalOpen] = useState(false);
+  const [isEditKeyModalOpen, setIsEditKeyModalOpen] = useState(false);
 
   const confirmRemoveKey = useCallback(
     (key: EnrollmentKey) => {
@@ -70,6 +80,16 @@ export default function EnrollmentKeysPage(props: PageProps) {
   const closeKeyDetails = useCallback(() => {
     setSelectedKey(null);
     setIsKeyDetailsModalOpen(false);
+  }, []);
+
+  const openEditKeyModal = useCallback((key: EnrollmentKey) => {
+    setSelectedKey(key);
+    setIsEditKeyModalOpen(true);
+  }, []);
+
+  const closeEditKeyModal = useCallback(() => {
+    setSelectedKey(null);
+    setIsEditKeyModalOpen(false);
   }, []);
 
   const tableColumns: TableColumnsType<EnrollmentKey> = [
@@ -108,13 +128,26 @@ export default function EnrollmentKeysPage(props: PageProps) {
             menu={{
               items: [
                 {
+                  key: 'edit',
+                  label: (
+                    <Typography.Text>
+                      <EditOutlined /> Edit Key
+                    </Typography.Text>
+                  ),
+                  onClick: (info) => {
+                    openEditKeyModal(key);
+                    info.domEvent.stopPropagation();
+                  },
+                },
+                {
                   key: 'delete',
                   label: (
-                    <Typography.Text onClick={() => confirmRemoveKey(key)}>
+                    <Typography.Text>
                       <DeleteOutlined /> Delete Key
                     </Typography.Text>
                   ),
                   onClick: (info) => {
+                    confirmRemoveKey(key);
                     info.domEvent.stopPropagation();
                   },
                 },
@@ -185,8 +218,8 @@ export default function EnrollmentKeysPage(props: PageProps) {
                 <Card className="header-card" style={{ height: '20rem', position: 'absolute', width: '100%' }}>
                   <Typography.Title level={3}>Add a Key</Typography.Title>
                   <Typography.Text>
-                    Use enrollment keys to connect hosts (netclients) to your {getBrandingConfig().productName} networks
-                    or register them to your {getBrandingConfig().productName} server.
+                    Use enrollment keys to connect hosts (netclients) to your {branding.productName} networks or
+                    register them to your {branding.productName} server.
                   </Typography.Text>
                   <Row style={{ marginTop: 'auto' }}>
                     <Col>
@@ -257,6 +290,9 @@ export default function EnrollmentKeysPage(props: PageProps) {
                 />
               </Col>
               <Col xs={12} md={6} style={{ textAlign: 'right' }}>
+                <Button size="large" style={{ marginRight: '0.5em' }} onClick={() => loadEnrollmentKeys()}>
+                  <ReloadOutlined /> Refresh keys
+                </Button>
                 <Button type="primary" size="large" onClick={() => setIsAddKeyModalOpen(true)}>
                   <PlusOutlined /> Create Key
                 </Button>
@@ -293,12 +329,28 @@ export default function EnrollmentKeysPage(props: PageProps) {
         }}
         onCancel={() => setIsAddKeyModalOpen(false)}
       />
+
       {isKeyDetailsModalOpen && selectedKey && (
         <EnrollmentKeyDetailsModal
           isOpen={isKeyDetailsModalOpen}
           key={selectedKey.value}
           enrollmentKey={selectedKey}
           onCancel={closeKeyDetails}
+        />
+      )}
+
+      {isEditKeyModalOpen && selectedKey && (
+        <UpdateEnrollmentKeyModal
+          isOpen={isEditKeyModalOpen}
+          key={selectedKey.value}
+          enrollmentKey={selectedKey}
+          onUpdateKey={(key: EnrollmentKey) => {
+            setIsEditKeyModalOpen(false);
+            setKeys((prevKeys) =>
+              [...prevKeys.filter((k) => k.value !== key.value), key].sort((k) => k.value.localeCompare(k.value)),
+            );
+          }}
+          onCancel={closeEditKeyModal}
         />
       )}
       {notifyCtx}

@@ -2,6 +2,7 @@ import { ArrowLeftOutlined, ArrowRightOutlined, SearchOutlined } from '@ant-desi
 import '../CustomModal.scss';
 import './NewHostModal.scss';
 import {
+  Alert,
   Button,
   Card,
   Col,
@@ -25,11 +26,17 @@ import { EnrollmentKeysService } from '@/services/EnrollmentKeysService';
 import { extractErrorMsg } from '@/utils/ServiceUtils';
 import { isEnrollmentKeyValid } from '@/utils/EnrollmentKeysUtils';
 import AddEnrollmentKeyModal from '../add-enrollment-key-modal/AddEnrollmentKeyModal';
+import { isSaasBuild } from '@/services/BaseService';
+import { ServerConfigService } from '@/services/ServerConfigService';
+import { getExtendedNode } from '@/utils/NodeUtils';
+import { ExtendedNode } from '@/models/Node';
+import { NULL_NODE, NULL_NODE_ID } from '@/constants/Types';
 
 interface NewHostModal {
   isOpen: boolean;
   onFinish?: () => void;
   onCancel?: (e: MouseEvent<HTMLButtonElement>) => void;
+  networkId?: string;
 }
 
 const steps = [
@@ -44,7 +51,7 @@ const steps = [
   },
 ];
 
-export default function NewHostModal({ isOpen, onCancel, onFinish }: NewHostModal) {
+export default function NewHostModal({ isOpen, onCancel, onFinish, networkId }: NewHostModal) {
   const store = useStore();
   const [notify, notifyCtx] = notification.useNotification();
 
@@ -90,6 +97,13 @@ export default function NewHostModal({ isOpen, onCancel, onFinish }: NewHostModa
   const loadEnrollmentKeys = useCallback(async () => {
     try {
       const keys = (await EnrollmentKeysService.getEnrollmentKeys()).data;
+
+      if (networkId) {
+        const filteredKeys = keys.filter((key) => key.networks.includes(networkId));
+        setEnrollmentKeys(filteredKeys);
+        return;
+      }
+
       setEnrollmentKeys(keys);
     } catch (err) {
       notify.error({
@@ -98,7 +112,7 @@ export default function NewHostModal({ isOpen, onCancel, onFinish }: NewHostModa
       });
       console.error(err);
     }
-  }, [notify]);
+  }, [notify, networkId]);
 
   const resetModal = () => {
     setCurrentStep(0);
@@ -107,6 +121,19 @@ export default function NewHostModal({ isOpen, onCancel, onFinish }: NewHostModa
     setSelectedOs('windows');
     setSelectedArch('amd64');
   };
+
+  const relayNode = useMemo<ExtendedNode>(() => {
+    // check if enrollment key is for relay node
+    if (selectedEnrollmentKey?.relay != NULL_NODE_ID) {
+      const relayNode = store.nodes
+        .map((node) => getExtendedNode(node, store.hostsCommonDetails))
+        .find((node) => node.id === selectedEnrollmentKey?.relay);
+      if (relayNode) {
+        return relayNode;
+      }
+    }
+    return NULL_NODE;
+  }, [selectedEnrollmentKey, store.nodes, store.hostsCommonDetails]);
 
   useEffect(() => {
     // reset arch on OS change
@@ -239,6 +266,14 @@ export default function NewHostModal({ isOpen, onCancel, onFinish }: NewHostModa
         <div className="CustomModalBody">
           <Row justify="center">
             <Col xs={24}>
+              {selectedEnrollmentKey?.relay != NULL_NODE_ID && (
+                <Alert
+                  style={{ marginBottom: '1rem' }}
+                  type="warning"
+                  message={`This enrollment key is for a relay node named ${relayNode.name}. Your host will automatically be relayed`}
+                  showIcon
+                />
+              )}
               <Card>
                 <p>
                   Connect host to network(s){' '}
@@ -257,7 +292,13 @@ export default function NewHostModal({ isOpen, onCancel, onFinish }: NewHostModa
                       className={`os-button ${selectedOs === 'windows' ? 'active' : ''}`}
                       onClick={(ev) => onShowInstallGuide(ev, 'windows')}
                     >
-                      <img src={`/icons/windows-${theme}.jpg`} alt="windows icon" className="logo" />
+                      <img
+                        src={`${
+                          isSaasBuild ? `/${ServerConfigService.getUiVersion()}` : ''
+                        }/icons/windows-${theme}.jpg`}
+                        alt="windows icon"
+                        className="logo"
+                      />
                       <p>Windows</p>
                     </div>
                   </Col>
@@ -266,7 +307,11 @@ export default function NewHostModal({ isOpen, onCancel, onFinish }: NewHostModa
                       className={`os-button ${selectedOs === 'macos' ? 'active' : ''}`}
                       onClick={(ev) => onShowInstallGuide(ev, 'macos')}
                     >
-                      <img src={`/icons/macos-${theme}.jpg`} alt="macos icon" className="logo" />
+                      <img
+                        src={`${isSaasBuild ? `/${ServerConfigService.getUiVersion()}` : ''}/icons/macos-${theme}.jpg`}
+                        alt="macos icon"
+                        className="logo"
+                      />
                       <p>Mac</p>
                     </div>
                   </Col>
@@ -275,7 +320,11 @@ export default function NewHostModal({ isOpen, onCancel, onFinish }: NewHostModa
                       className={`os-button ${selectedOs === 'linux' ? 'active' : ''}`}
                       onClick={(ev) => onShowInstallGuide(ev, 'linux')}
                     >
-                      <img src={`/icons/linux-${theme}.jpg`} alt="linux icon" className="logo" />
+                      <img
+                        src={`${isSaasBuild ? `/${ServerConfigService.getUiVersion()}` : ''}/icons/linux-${theme}.jpg`}
+                        alt="linux icon"
+                        className="logo"
+                      />
                       <p>Linux</p>
                     </div>
                   </Col>
@@ -286,7 +335,13 @@ export default function NewHostModal({ isOpen, onCancel, onFinish }: NewHostModa
                       }`}
                       onClick={(ev) => onShowInstallGuide(ev, 'freebsd13')}
                     >
-                      <img src={`/icons/freebsd-${theme}.jpg`} alt="freebsd icon" className="logo" />
+                      <img
+                        src={`${
+                          isSaasBuild ? `/${ServerConfigService.getUiVersion()}` : ''
+                        }/icons/freebsd-${theme}.jpg`}
+                        alt="freebsd icon"
+                        className="logo"
+                      />
                       <p>FreeBSD</p>
                     </div>
                   </Col>
@@ -295,7 +350,11 @@ export default function NewHostModal({ isOpen, onCancel, onFinish }: NewHostModa
                       className={`os-button ${selectedOs === 'docker' ? 'active' : ''}`}
                       onClick={(ev) => onShowInstallGuide(ev, 'docker')}
                     >
-                      <img src={`/icons/docker-${theme}.jpg`} alt="docker icon" className="logo" />
+                      <img
+                        src={`${isSaasBuild ? `/${ServerConfigService.getUiVersion()}` : ''}/icons/docker-${theme}.jpg`}
+                        alt="docker icon"
+                        className="logo"
+                      />
                       <p>Docker</p>
                     </div>
                   </Col>
@@ -504,6 +563,23 @@ export default function NewHostModal({ isOpen, onCancel, onFinish }: NewHostModa
                           }`}
                         </Typography.Text>
                       </li>
+                      <li>
+                        <Typography.Text>Compose</Typography.Text>
+                        <Typography.Text code copyable>
+                          {`
+version: '3.7'
+services:
+  netclient:
+    image: gravitl/netclient:${store.serverConfig?.Version ?? '<version>'}
+    network_mode: host
+    privileged: true
+    environment:
+      - TOKEN=${selectedEnrollmentKey?.token}
+    volumes:
+      - /etc/netclient:/etc/netclient
+`}
+                        </Typography.Text>
+                      </li>
                     </ol>
                     <small>Note: It might take a few minutes for the host to show up in the network(s)</small>
                   </div>
@@ -526,6 +602,7 @@ export default function NewHostModal({ isOpen, onCancel, onFinish }: NewHostModa
         onCancel={() => {
           setIsAddEnrollmentKeyModalOpen(false);
         }}
+        networkId={networkId}
       />
     </Modal>
   );

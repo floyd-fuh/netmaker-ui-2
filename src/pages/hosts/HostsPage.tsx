@@ -1,7 +1,7 @@
 import { Host } from '@/models/Host';
 import { AppRoutes } from '@/routes';
 import { useStore } from '@/store/store';
-import { getHostRoute } from '@/utils/RouteUtils';
+import { getHostRoute, resolveAppRoute } from '@/utils/RouteUtils';
 import { MoreOutlined, PlusOutlined, ReloadOutlined, SearchOutlined } from '@ant-design/icons';
 import {
   Button,
@@ -15,6 +15,7 @@ import {
   notification,
   Row,
   Skeleton,
+  Space,
   Switch,
   Table,
   TableColumnsType,
@@ -33,6 +34,7 @@ import { Network } from '@/models/Network';
 import { HostsService } from '@/services/HostsService';
 import { extractErrorMsg } from '@/utils/ServiceUtils';
 import NewHostModal from '@/components/modals/new-host-modal/NewHostModal';
+import { lt } from 'semver';
 
 export default function HostsPage(props: PageProps) {
   const [notify, notifyCtx] = notification.useNotification();
@@ -51,6 +53,21 @@ export default function HostsPage(props: PageProps) {
   const [hasAdvicedHosts, setHasAdvicedHosts] = useState(false);
   const [isRefreshingHosts, setIsRefreshingHosts] = useState(false);
   const [isAddNewHostModalOpen, setIsAddNewHostModalOpen] = useState(false);
+
+  const checkIfUpgradeButtonShouldBeDisabled = useCallback(
+    (host: Host) => {
+      if (store.serverConfig?.Version === undefined) {
+        return true;
+      }
+
+      if (lt(host.version, store.serverConfig?.Version)) {
+        return false;
+      }
+
+      return true;
+    },
+    [store.serverConfig?.Version],
+  );
 
   const filteredNetworks = useMemo(() => {
     return store.networks;
@@ -79,6 +96,30 @@ export default function HostsPage(props: PageProps) {
           } catch (err) {
             notify.error({
               message: 'Failed to refresh host keys',
+              description: extractErrorMsg(err as any),
+            });
+          }
+        },
+      });
+    },
+    [notify],
+  );
+
+  const requestHostPull = useCallback(
+    (host: Host) => {
+      Modal.confirm({
+        title: 'Synchronise host',
+        content: `This will trigger the host (${host.name}) to pull latest network(s) state from the server. Proceed?`,
+        onOk: async () => {
+          try {
+            await HostsService.requestHostPull(host.id);
+            notify.success({
+              message: 'Host is syncing...',
+              description: `Host pull has been initiated for ${host.name}. This may take a while.`,
+            });
+          } catch (err) {
+            notify.error({
+              message: 'Failed to synchronise host',
               description: extractErrorMsg(err as any),
             });
           }
@@ -183,6 +224,37 @@ export default function HostsPage(props: PageProps) {
     });
   }, [notify]);
 
+  const confirmUpgradeClient = useCallback(
+    async (host: Host) => {
+      Modal.confirm({
+        title: 'Upgrade host version',
+        content: (
+          <>
+            <Row>
+              <Col xs={24}>
+                <Typography.Text>
+                  Are you sure you want to upgrade the version of the host {host.name} to {store.serverConfig?.Version}
+                </Typography.Text>
+              </Col>
+            </Row>
+          </>
+        ),
+        onOk: async () => {
+          try {
+            await HostsService.upgradeClientVersion(host.id);
+            notify.success({ message: `The upgrade has been triggered and it may take a while` });
+          } catch (err) {
+            notify.error({
+              message: 'Failed to upgrade client version',
+              description: extractErrorMsg(err as any),
+            });
+          }
+        },
+      });
+    },
+    [notify, store.nodes],
+  );
+
   const hostsTableColumns: TableColumnsType<Host> = useMemo(
     () => [
       {
@@ -281,6 +353,23 @@ export default function HostsPage(props: PageProps) {
         },
       },
       {
+        title: '',
+        width: '5rem',
+        render: (_, host) => (
+          <div onClick={(ev) => ev.stopPropagation()}>
+            <Button
+              type="text"
+              icon={<ReloadOutlined />}
+              onClick={() => {
+                requestHostPull(host);
+              }}
+            >
+              Sync
+            </Button>
+          </div>
+        ),
+      },
+      {
         width: '1rem',
         render(_, host) {
           return (
@@ -310,6 +399,15 @@ export default function HostsPage(props: PageProps) {
                     onClick: (ev) => {
                       ev.domEvent.stopPropagation();
                       onEditHost(host);
+                    },
+                  },
+                  {
+                    key: 'upgrade',
+                    label: 'Upgrade Version',
+                    disabled: checkIfUpgradeButtonShouldBeDisabled(host),
+                    onClick: (ev) => {
+                      ev.domEvent.stopPropagation();
+                      confirmUpgradeClient(host);
                     },
                   },
                   {
@@ -407,13 +505,44 @@ export default function HostsPage(props: PageProps) {
         },
         defaultSortOrder: 'ascend',
       },
+      selectedHost
+        ? {
+            title: 'Host Network IP',
+            dataIndex: 'addressrange',
+            key: 'hostnetworkip',
+            render: (_: any, network: Network) => {
+              const node = store.nodes.find(
+                (node) => node.network === network.netid && node.hostid === selectedHost.id,
+              );
+              return node ? (
+                <div onClick={(ev) => ev.stopPropagation()}>
+                  <Space direction="vertical" size={0}>
+                    {node.address && <Typography.Text>{node.address}</Typography.Text>}
+                    {node.address6 && <Typography.Text>{node.address6}</Typography.Text>}
+                  </Space>
+                </div>
+              ) : (
+                <div onClick={(ev) => ev.stopPropagation()}>
+                  <Space direction="vertical" size={0}>
+                    <Typography.Text type="secondary">Not connected</Typography.Text>
+                  </Space>
+                </div>
+              );
+            },
+          }
+        : {},
       {
-        title: 'Address Range (IPv4)',
+        title: 'Address Range',
         dataIndex: 'addressrange',
-      },
-      {
-        title: 'Address Range (IPv6)',
-        dataIndex: 'addressrange6',
+        key: 'addressrange',
+        render: (adress: string, network: Network) => (
+          <div onClick={(ev) => ev.stopPropagation()}>
+            <Space direction="vertical" size={0}>
+              {network.addressrange && <Typography.Text>{network.addressrange}</Typography.Text>}
+              {network.addressrange6 && <Typography.Text>{network.addressrange6}</Typography.Text>}
+            </Space>
+          </div>
+        ),
       },
       selectedHost
         ? {
@@ -564,10 +693,14 @@ export default function HostsPage(props: PageProps) {
     [getOverviewContent, getNetworkAccessContent],
   );
 
-  useEffect(() => {
-    storeFetchHosts();
-    storeFetchNetworks();
+  const fetchHostsAndNetworks = async () => {
+    await storeFetchHosts();
+    await storeFetchNetworks();
     setHasLoaded(true);
+  };
+
+  useEffect(() => {
+    fetchHostsAndNetworks();
   }, [storeFetchHosts, storeFetchNetworks]);
 
   useEffect(() => {
@@ -666,7 +799,7 @@ export default function HostsPage(props: PageProps) {
                   <Typography.Text>
                     If a host is already registered with the server, you can add it into any network directly from the
                     dashboard. Simply go to Network Access Management tab under the{' '}
-                    <Link to={AppRoutes.HOSTS_ROUTE}>Hosts page</Link>.
+                    <Link to={resolveAppRoute(AppRoutes.HOSTS_ROUTE)}>Hosts page</Link>.
                   </Typography.Text>
                 </Card>
               </Col>
@@ -691,7 +824,17 @@ export default function HostsPage(props: PageProps) {
                   prefix={<SearchOutlined />}
                 />
               </Col>
-              <Col xs={12} md={6} style={{ textAlign: 'right' }}>
+              <Col xs={12} md={10} style={{ textAlign: 'right' }}>
+                <Button
+                  size="large"
+                  style={{ marginRight: '1rem' }}
+                  onClick={() => {
+                    setHasLoaded(false);
+                    fetchHostsAndNetworks();
+                  }}
+                >
+                  <ReloadOutlined /> Reload
+                </Button>
                 <Button
                   size="large"
                   style={{ marginRight: '1rem' }}
@@ -722,7 +865,7 @@ export default function HostsPage(props: PageProps) {
         isOpen={isAddNewHostModalOpen}
         onFinish={() => {
           setIsAddNewHostModalOpen(false);
-          navigate(AppRoutes.HOSTS_ROUTE);
+          navigate(resolveAppRoute(AppRoutes.HOSTS_ROUTE));
         }}
         onCancel={() => setIsAddNewHostModalOpen(false)}
       />
